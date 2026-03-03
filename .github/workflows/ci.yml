@@ -1,0 +1,173 @@
+name: CI
+
+on:
+  push:
+    branches: ["main", "master"]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+          pip install twine
+
+      - name: Ruff
+        run: ruff check .
+
+      - name: Mypy
+        run: mypy exile_orm
+
+      - name: Pytest
+        run: pytest -m "not integration"
+
+      - name: Build package
+        run: python -m build
+
+      - name: Twine check
+        run: twine check dist/*
+
+      - name: Verify py.typed
+        run: |
+          python - <<'PY'
+          import sys
+          import zipfile
+          from pathlib import Path
+
+          wheels = sorted(Path("dist").glob("*.whl"))
+          if not wheels:
+              print("No wheel artifact produced", file=sys.stderr)
+              raise SystemExit(1)
+
+          wheel = wheels[-1]
+          with zipfile.ZipFile(wheel) as zf:
+              names = set(zf.namelist())
+          if "exile_orm/py.typed" not in names:
+              print(f"py.typed missing in {wheel.name}", file=sys.stderr)
+              raise SystemExit(1)
+          print(f"Verified py.typed in {wheel.name}")
+          PY
+
+      - name: Verify sdist required files
+        run: |
+          python - <<'PY'
+          import sys
+          import tarfile
+          from pathlib import Path
+
+          sdists = sorted(Path("dist").glob("*.tar.gz"))
+          if not sdists:
+              print("No sdist artifact produced", file=sys.stderr)
+              raise SystemExit(1)
+
+          sdist = sdists[-1]
+          required = {
+              "exile_orm/py.typed",
+              "README.md",
+              "CHANGELOG.md",
+              "LICENSE",
+              "pyproject.toml",
+          }
+          with tarfile.open(sdist, mode="r:gz") as tf:
+              names = set(tf.getnames())
+
+          missing = []
+          for required_path in sorted(required):
+              has_required = any(
+                  name == required_path or name.endswith(f"/{required_path}")
+                  for name in names
+              )
+              if not has_required:
+                  missing.append(required_path)
+
+          if missing:
+              print(
+                  f"Missing files in {sdist.name}: {', '.join(missing)}",
+                  file=sys.stderr,
+              )
+              raise SystemExit(1)
+          print(f"Verified required files in {sdist.name}")
+          PY
+
+      - name: Wheel install smoke test
+        run: |
+          python - <<'PY'
+          import os
+          import subprocess
+          import tempfile
+          from pathlib import Path
+
+          wheels = sorted(Path("dist").glob("*.whl"))
+          if not wheels:
+              raise SystemExit("No wheel artifact produced")
+
+          wheel = wheels[-1]
+          with tempfile.TemporaryDirectory(prefix="exile_orm_ci_smoke_") as tmp:
+              venv_dir = Path(tmp) / "venv"
+              python_bin = venv_dir / "bin" / "python"
+              subprocess.run(["python", "-m", "venv", str(venv_dir)], check=True)
+              subprocess.run(
+                  [str(python_bin), "-m", "pip", "install", "--upgrade", "pip"],
+                  check=True,
+                  stdout=subprocess.DEVNULL,
+              )
+              subprocess.run(
+                  [str(python_bin), "-m", "pip", "install", "--no-deps", str(wheel)],
+                  check=True,
+                  stdout=subprocess.DEVNULL,
+              )
+              env = dict(os.environ)
+              env["PYTHONPATH"] = ""
+              subprocess.run(
+                  [str(python_bin), "-c", "import exile_orm; print(exile_orm.__name__)"],
+                  check=True,
+                  env=env,
+              )
+          print(f"Smoke install/import passed for {wheel.name}")
+          PY
+
+  integration:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: exile
+          POSTGRES_PASSWORD: exile
+          POSTGRES_DB: exile_orm_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U exile -d exile_orm_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      EXILE_ORM_TEST_DATABASE_URL: postgresql://exile:exile@127.0.0.1:5432/exile_orm_test
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Run integration tests
+        run: pytest -m integration

@@ -1,0 +1,60 @@
+[build-system]
+requires = ["hatchling>=1.24.2"]
+build-backend = "hatchling.build"
+
+[project]
+name = "exile-orm"
+version = "0.2.0"
+description = "A native async Python ORM."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "GPL-3.0-or-later" }
+authors = [{ name = "exile-orm contributors" }]
+dependencies = ["asyncpg>=0.29,<1.0"]
+
+[project.optional-dependencies]
+dev = [
+  "build>=1.2",
+  "mypy>=1.11",
+  "pytest>=8.3",
+  "pytest-asyncio>=0.23",
+  "ruff>=0.6.8",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["exile_orm"]
+include = ["exile_orm/py.typed"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+  "exile_orm",
+  "tests",
+  "examples",
+  "docs",
+  "scripts",
+  ".github/workflows",
+  "README.md",
+  "LICENSE",
+  "CHANGELOG.md",
+  "pyproject.toml",
+]
+exclude = [".idea", ".mypy_cache", ".pytest_cache", ".ruff_cache", "dist", "uv.lock", "TODO.md"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+markers = ["integration: marks tests that require an external database"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_unused_ignores = true
+warn_redundant_casts = true
+warn_unused_configs = true
